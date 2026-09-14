@@ -9,6 +9,7 @@ import {
   ThumbsUp, Share2, Download, ExternalLink, Info
 } from 'lucide-react';
 import { allMedia, genres, typeLabels, typeColors, MediaItem } from './data/media';
+import { fetchWikiSummary, WikiSummary } from './services/wiki';
 
 // ==================== STORE ====================
 interface WatchItem {
@@ -169,6 +170,21 @@ function Header() {
 function MediaCard({ item, size = 'md' }: { item: MediaItem; size?: 'sm' | 'md' | 'lg' }) {
   const navigate = useNavigate();
   const dims = size === 'sm' ? 'w-32' : size === 'lg' ? 'w-48' : 'w-40';
+  const [imgError, setImgError] = useState(false);
+
+  // Generate a better placeholder with gradient
+  const getPlaceholder = (title: string, type: string) => {
+    const colors: Record<string, string> = {
+      movie: '6366f1',
+      series: '3b82f6',
+      animation: 'ec4899',
+      anime: '8b5cf6',
+      documentary: '10b981',
+      short: 'f59e0b'
+    };
+    const color = colors[type] || '6366f1';
+    return `https://placehold.co/300x450/${color}/ffffff?text=${encodeURIComponent(title.slice(0, 10))}`;
+  };
 
   return (
     <motion.div
@@ -179,11 +195,11 @@ function MediaCard({ item, size = 'md' }: { item: MediaItem; size?: 'sm' | 'md' 
     >
       <div className="relative aspect-[2/3] rounded-xl overflow-hidden shadow-lg">
         <img
-          src={item.poster}
+          src={imgError ? getPlaceholder(item.title, item.type) : item.poster}
           alt={item.title}
           className="w-full h-full object-cover"
           loading="lazy"
-          onError={(e) => { (e.target as HTMLImageElement).src = `https://placehold.co/300x450/1a1a2e/6366f1?text=${encodeURIComponent(item.title.slice(0, 6))}`; }}
+          onError={() => setImgError(true)}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
         <div className="absolute top-2 right-2">
@@ -251,6 +267,7 @@ function MediaRow({ title, items, icon: Icon }: { title: string; items: MediaIte
 function HeroSection() {
   const featured = allMedia.filter(m => m.rating >= 9.0).slice(0, 5);
   const [current, setCurrent] = useState(0);
+  const [heroImgError, setHeroImgError] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrent(c => (c + 1) % featured.length), 6000);
@@ -259,14 +276,18 @@ function HeroSection() {
 
   const item = featured[current];
 
+  const getHeroPlaceholder = (title: string) => {
+    return `https://placehold.co/1920x1080/1a1a2e/6366f1?text=${encodeURIComponent(title)}`;
+  };
+
   return (
     <div className="relative h-[70vh] min-h-[500px] overflow-hidden">
       <div className="absolute inset-0">
         <img
-          src={item.backdrop}
+          src={heroImgError ? getHeroPlaceholder(item.title) : item.backdrop}
           alt={item.title}
           className="w-full h-full object-cover transition-all duration-1000"
-          onError={(e) => { (e.target as HTMLImageElement).src = `https://placehold.co/1920x1080/1a1a2e/6366f1?text=${encodeURIComponent(item.title)}`; }}
+          onError={() => setHeroImgError(true)}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0f] via-[#0a0a0f]/60 to-transparent" />
         <div className="absolute inset-0 bg-gradient-to-l from-transparent to-[#0a0a0f]/80" />
@@ -523,6 +544,21 @@ function ItemDetailPage() {
   const [showReview, setShowReview] = useState(false);
   const [userRating, setUserRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
+  const [wikiData, setWikiData] = useState<WikiSummary | null>(null);
+  const [wikiLoading, setWikiLoading] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
+  // Fetch Wikipedia data
+  useEffect(() => {
+    if (!item) return;
+    setWikiLoading(true);
+    fetchWikiSummary(item.title, item.originalTitle)
+      .then(data => {
+        setWikiData(data);
+        setWikiLoading(false);
+      })
+      .catch(() => setWikiLoading(false));
+  }, [item]);
 
   if (!item) return (
     <div className="max-w-7xl mx-auto px-4 py-20 text-center">
@@ -530,6 +566,14 @@ function ItemDetailPage() {
       <button onClick={() => navigate('/')} className="mt-4 px-6 py-2 bg-indigo-500 rounded-lg text-white">بازگشت به خانه</button>
     </div>
   );
+
+  // Use Wikipedia image if TMDB image fails
+  const posterUrl = imageError && wikiData?.thumbnail?.source
+    ? wikiData.thumbnail.source
+    : item.poster;
+  const backdropUrl = imageError && wikiData?.originalimage?.source
+    ? wikiData.originalimage.source
+    : item.backdrop;
 
   const currentWatch = watchStatus.find(w => w.id === item.id);
   const similar = allMedia.filter(m => m.id !== item.id && m.genres.some(g => item.genres.includes(g)) && m.type === item.type).slice(0, 12);
@@ -555,10 +599,13 @@ function ItemDetailPage() {
       {/* Backdrop */}
       <div className="relative h-[50vh] min-h-[400px]">
         <img
-          src={item.backdrop}
+          src={backdropUrl}
           alt={item.title}
           className="w-full h-full object-cover"
-          onError={(e) => { (e.target as HTMLImageElement).src = `https://placehold.co/1920x1080/1a1a2e/6366f1?text=${encodeURIComponent(item.title)}`; }}
+          onError={(e) => {
+            setImageError(true);
+            (e.target as HTMLImageElement).src = `https://placehold.co/1920x1080/1a1a2e/6366f1?text=${encodeURIComponent(item.title)}`;
+          }}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0f] via-[#0a0a0f]/50 to-transparent" />
       </div>
@@ -568,7 +615,7 @@ function ItemDetailPage() {
           {/* Poster */}
           <div className="flex-shrink-0">
             <img
-              src={item.poster}
+              src={posterUrl}
               alt={item.title}
               className="w-48 md:w-64 rounded-2xl shadow-2xl shadow-indigo-500/20"
               onError={(e) => { (e.target as HTMLImageElement).src = `https://placehold.co/400x600/1a1a2e/6366f1?text=${encodeURIComponent(item.title)}`; }}
@@ -607,7 +654,40 @@ function ItemDetailPage() {
               ))}
             </div>
 
-            <p className="text-gray-300 leading-relaxed mb-6">{item.overview}</p>
+            <p className="text-gray-300 leading-relaxed mb-4">{item.overview}</p>
+
+            {/* Wikipedia Summary */}
+            {wikiLoading && (
+              <div className="glass rounded-xl p-4 mb-4">
+                <div className="flex items-center gap-2 text-gray-400 text-sm">
+                  <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                  در حال دریافت اطلاعات از ویکی‌پدیا...
+                </div>
+              </div>
+            )}
+            {wikiData && wikiData.extract && (
+              <div className="glass rounded-xl p-4 mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Info size={16} className="text-indigo-400" />
+                  <h4 className="text-sm font-medium text-white">اطلاعات تکمیلی از ویکی‌پدیا</h4>
+                </div>
+                {wikiData.description && (
+                  <p className="text-xs text-indigo-300 mb-2">{wikiData.description}</p>
+                )}
+                <p className="text-gray-300 text-sm leading-relaxed">{wikiData.extract}</p>
+                {wikiData.content_urls?.desktop?.page && (
+                  <a
+                    href={wikiData.content_urls.desktop.page}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 mt-3 text-xs text-indigo-400 hover:text-indigo-300"
+                  >
+                    <ExternalLink size={12} />
+                    مطالعه بیشتر در ویکی‌پدیا
+                  </a>
+                )}
+              </div>
+            )}
 
             {item.director && (
               <p className="text-sm text-gray-400 mb-2">کارگردان: <span className="text-white">{item.director}</span></p>
