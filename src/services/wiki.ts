@@ -99,90 +99,44 @@ export async function fetchWikiSummary(faTitle: string, enTitle: string): Promis
 }
 
 /**
- * Search Wikipedia for a title
+ * Get image URL from Wikipedia
  */
-export async function searchWiki(query: string, lang: 'fa' | 'en' = 'fa'): Promise<string[]> {
-  const baseUrl = lang === 'fa'
-    ? 'https://fa.wikipedia.org/w/api.php'
-    : 'https://en.wikipedia.org/w/api.php';
-
-  try {
-    const params = new URLSearchParams({
-      action: 'opensearch',
-      search: query,
-      limit: '5',
-      namespace: '0',
-      format: 'json',
-      origin: '*'
-    });
-
-    const res = await fetch(`${baseUrl}?${params}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data[1] || [];
-  } catch {
-    return [];
+export function getWikiImageUrl(wikiData: WikiSummary | null, size: 'thumb' | 'original' = 'thumb'): string | null {
+  if (!wikiData) return null;
+  
+  if (size === 'thumb' && wikiData.thumbnail?.source) {
+    return wikiData.thumbnail.source;
   }
+  
+  if (wikiData.originalimage?.source) {
+    return wikiData.originalimage.source;
+  }
+  
+  return null;
 }
 
 /**
- * Get Wikipedia images for a title
+ * Fetch all media images from Wikipedia in bulk
  */
-export async function fetchWikiImages(title: string, lang: 'fa' | 'en' = 'en'): Promise<string[]> {
-  const baseUrl = lang === 'fa'
-    ? 'https://fa.wikipedia.org/w/api.php'
-    : 'https://en.wikipedia.org/w/api.php';
-
-  try {
-    const params = new URLSearchParams({
-      action: 'query',
-      titles: title,
-      prop: 'images',
-      format: 'json',
-      origin: '*'
+export async function fetchAllMediaImages(items: { id: number; title: string; originalTitle: string }[]): Promise<Map<number, WikiSummary>> {
+  const results = new Map<number, WikiSummary>();
+  
+  // Fetch in batches to avoid overwhelming the API
+  const batchSize = 5;
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const promises = batch.map(async (item) => {
+      const wikiData = await fetchWikiSummary(item.title, item.originalTitle);
+      if (wikiData) {
+        results.set(item.id, wikiData);
+      }
     });
-
-    const res = await fetch(`${baseUrl}?${params}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    const pages = data.query?.pages;
-    if (!pages) return [];
-
-    const page = Object.values(pages)[0] as any;
-    return page?.images?.map((img: any) => img.title) || [];
-  } catch {
-    return [];
+    await Promise.all(promises);
+    // Small delay between batches
+    if (i + batchSize < items.length) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
   }
-}
-
-/**
- * Get full Wikipedia page content
- */
-export async function fetchWikiFullContent(title: string, lang: 'fa' | 'en' = 'fa'): Promise<string | null> {
-  const baseUrl = lang === 'fa'
-    ? 'https://fa.wikipedia.org/w/api.php'
-    : 'https://en.wikipedia.org/w/api.php';
-
-  try {
-    const params = new URLSearchParams({
-      action: 'query',
-      titles: title,
-      prop: 'extracts',
-      exintro: 'false',
-      explaintext: 'true',
-      format: 'json',
-      origin: '*'
-    });
-
-    const res = await fetch(`${baseUrl}?${params}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const pages = data.query?.pages;
-    if (!pages) return null;
-
-    const page = Object.values(pages)[0] as any;
-    return page?.extract || null;
-  } catch {
-    return null;
-  }
+  
+  return results;
 }

@@ -30,6 +30,32 @@ function useLocalStorage<T>(key: string, initial: T): [T, (v: T | ((p: T) => T))
   return [val, setVal];
 }
 
+// ==================== SEARCH RESULT ====================
+function SearchResult({ item, onSelect }: { item: MediaItem; onSelect: () => void }) {
+  const [wikiImg, setWikiImg] = useState<string | null>(null);
+
+  useEffect(() => {
+    const wikiTitle = item.wikiTitle || item.originalTitle;
+    fetchWikiSummary(item.title, wikiTitle).then(data => {
+      if (data?.thumbnail?.source) setWikiImg(data.thumbnail.source);
+    });
+  }, [item]);
+
+  return (
+    <button
+      onClick={onSelect}
+      className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 text-right"
+    >
+      <img src={wikiImg || item.poster} alt={item.title} className="w-10 h-14 rounded object-cover" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-white truncate">{item.title}</p>
+        <p className="text-xs text-gray-400">{item.year} | {typeLabels[item.type]}</p>
+      </div>
+      <span className="text-xs text-amber-400">{item.rating}</span>
+    </button>
+  );
+}
+
 // ==================== HEADER ====================
 function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -104,18 +130,7 @@ function Header() {
                   {results.length > 0 && (
                     <div className="mt-2 space-y-1 max-h-64 overflow-y-auto">
                       {results.map(item => (
-                        <button
-                          key={item.id}
-                          onClick={() => { navigate(`/item/${item.id}`); setSearchOpen(false); setQuery(''); }}
-                          className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 text-right"
-                        >
-                          <img src={item.poster} alt={item.title} className="w-10 h-14 rounded object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `https://placehold.co/100x150/1a1a2e/6366f1?text=${encodeURIComponent(item.title.slice(0,4))}`; }} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm text-white truncate">{item.title}</p>
-                            <p className="text-xs text-gray-400">{item.year} | {typeLabels[item.type]}</p>
-                          </div>
-                          <span className="text-xs text-amber-400">{item.rating}</span>
-                        </button>
+                        <SearchResult key={item.id} item={item} onSelect={() => { navigate(`/item/${item.id}`); setSearchOpen(false); setQuery(''); }} />
                       ))}
                     </div>
                   )}
@@ -170,21 +185,24 @@ function Header() {
 function MediaCard({ item, size = 'md' }: { item: MediaItem; size?: 'sm' | 'md' | 'lg' }) {
   const navigate = useNavigate();
   const dims = size === 'sm' ? 'w-32' : size === 'lg' ? 'w-48' : 'w-40';
+  const [wikiImg, setWikiImg] = useState<string | null>(null);
   const [imgError, setImgError] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Generate a better placeholder with gradient
-  const getPlaceholder = (title: string, type: string) => {
-    const colors: Record<string, string> = {
-      movie: '6366f1',
-      series: '3b82f6',
-      animation: 'ec4899',
-      anime: '8b5cf6',
-      documentary: '10b981',
-      short: 'f59e0b'
+  // Fetch Wikipedia image
+  useEffect(() => {
+    const fetchImage = async () => {
+      const wikiTitle = item.wikiTitle || item.originalTitle;
+      const wikiData = await fetchWikiSummary(item.title, wikiTitle);
+      if (wikiData?.thumbnail?.source) {
+        setWikiImg(wikiData.thumbnail.source);
+      }
+      setLoading(false);
     };
-    const color = colors[type] || '6366f1';
-    return `https://placehold.co/300x450/${color}/ffffff?text=${encodeURIComponent(title.slice(0, 10))}`;
-  };
+    fetchImage();
+  }, [item]);
+
+  const displayImage = wikiImg || item.poster;
 
   return (
     <motion.div
@@ -194,12 +212,18 @@ function MediaCard({ item, size = 'md' }: { item: MediaItem; size?: 'sm' | 'md' 
       onClick={() => navigate(`/item/${item.id}`)}
     >
       <div className="relative aspect-[2/3] rounded-xl overflow-hidden shadow-lg">
+        {loading && (
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/50 to-purple-900/50 flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
         <img
-          src={imgError ? getPlaceholder(item.title, item.type) : item.poster}
+          src={displayImage}
           alt={item.title}
           className="w-full h-full object-cover"
           loading="lazy"
           onError={() => setImgError(true)}
+          style={{ opacity: loading ? 0 : 1, transition: 'opacity 0.3s' }}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
         <div className="absolute top-2 right-2">
@@ -267,27 +291,41 @@ function MediaRow({ title, items, icon: Icon }: { title: string; items: MediaIte
 function HeroSection() {
   const featured = allMedia.filter(m => m.rating >= 9.0).slice(0, 5);
   const [current, setCurrent] = useState(0);
-  const [heroImgError, setHeroImgError] = useState(false);
+  const [heroImages, setHeroImages] = useState<Map<number, string>>(new Map());
 
   useEffect(() => {
     const timer = setInterval(() => setCurrent(c => (c + 1) % featured.length), 6000);
     return () => clearInterval(timer);
   }, [featured.length]);
 
-  const item = featured[current];
+  // Fetch Wikipedia images for featured items
+  useEffect(() => {
+    const fetchImages = async () => {
+      const newImages = new Map<number, string>();
+      for (const item of featured) {
+        const wikiTitle = item.wikiTitle || item.originalTitle;
+        const wikiData = await fetchWikiSummary(item.title, wikiTitle);
+        if (wikiData?.originalimage?.source) {
+          newImages.set(item.id, wikiData.originalimage.source);
+        } else if (wikiData?.thumbnail?.source) {
+          newImages.set(item.id, wikiData.thumbnail.source);
+        }
+      }
+      setHeroImages(newImages);
+    };
+    fetchImages();
+  }, []);
 
-  const getHeroPlaceholder = (title: string) => {
-    return `https://placehold.co/1920x1080/1a1a2e/6366f1?text=${encodeURIComponent(title)}`;
-  };
+  const item = featured[current];
+  const heroImage = heroImages.get(item.id) || item.backdrop;
 
   return (
     <div className="relative h-[70vh] min-h-[500px] overflow-hidden">
       <div className="absolute inset-0">
         <img
-          src={heroImgError ? getHeroPlaceholder(item.title) : item.backdrop}
+          src={heroImage}
           alt={item.title}
           className="w-full h-full object-cover transition-all duration-1000"
-          onError={() => setHeroImgError(true)}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0f] via-[#0a0a0f]/60 to-transparent" />
         <div className="absolute inset-0 bg-gradient-to-l from-transparent to-[#0a0a0f]/80" />
@@ -488,16 +526,24 @@ function DiscoverPage() {
 
 function ListItem({ item }: { item: MediaItem }) {
   const navigate = useNavigate();
+  const [wikiImg, setWikiImg] = useState<string | null>(null);
+
+  useEffect(() => {
+    const wikiTitle = item.wikiTitle || item.originalTitle;
+    fetchWikiSummary(item.title, wikiTitle).then(data => {
+      if (data?.thumbnail?.source) setWikiImg(data.thumbnail.source);
+    });
+  }, [item]);
+
   return (
     <div
       onClick={() => navigate(`/item/${item.id}`)}
       className="glass rounded-xl p-3 flex items-center gap-4 cursor-pointer hover:bg-white/5 transition-colors"
     >
       <img
-        src={item.poster}
+        src={wikiImg || item.poster}
         alt={item.title}
         className="w-16 h-24 rounded-lg object-cover"
-        onError={(e) => { (e.target as HTMLImageElement).src = `https://placehold.co/100x150/1a1a2e/6366f1?text=${encodeURIComponent(item.title.slice(0,4))}`; }}
       />
       <div className="flex-1 min-w-0">
         <h3 className="text-white font-medium truncate">{item.title}</h3>
@@ -546,7 +592,6 @@ function ItemDetailPage() {
   const [reviewText, setReviewText] = useState('');
   const [wikiData, setWikiData] = useState<WikiSummary | null>(null);
   const [wikiLoading, setWikiLoading] = useState(false);
-  const [imageError, setImageError] = useState(false);
 
   // Fetch Wikipedia data
   useEffect(() => {
@@ -567,13 +612,9 @@ function ItemDetailPage() {
     </div>
   );
 
-  // Use Wikipedia image if TMDB image fails
-  const posterUrl = imageError && wikiData?.thumbnail?.source
-    ? wikiData.thumbnail.source
-    : item.poster;
-  const backdropUrl = imageError && wikiData?.originalimage?.source
-    ? wikiData.originalimage.source
-    : item.backdrop;
+  // Use Wikipedia images primarily
+  const posterUrl = wikiData?.originalimage?.source || wikiData?.thumbnail?.source || item.poster;
+  const backdropUrl = wikiData?.originalimage?.source || item.backdrop;
 
   const currentWatch = watchStatus.find(w => w.id === item.id);
   const similar = allMedia.filter(m => m.id !== item.id && m.genres.some(g => item.genres.includes(g)) && m.type === item.type).slice(0, 12);
@@ -602,10 +643,6 @@ function ItemDetailPage() {
           src={backdropUrl}
           alt={item.title}
           className="w-full h-full object-cover"
-          onError={(e) => {
-            setImageError(true);
-            (e.target as HTMLImageElement).src = `https://placehold.co/1920x1080/1a1a2e/6366f1?text=${encodeURIComponent(item.title)}`;
-          }}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0f] via-[#0a0a0f]/50 to-transparent" />
       </div>
